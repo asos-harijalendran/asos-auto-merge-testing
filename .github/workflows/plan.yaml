@@ -67,6 +67,7 @@ jobs:
         id: changescheck
         if: steps.get-changed-files.outputs.runsteps == 'true'
         shell: pwsh
+        continue-on-error: true
         run: |
           Write-Host "Checking existance of changes file..."
           if (Test-Path -Path $env:working-directory\changes.txt) {
