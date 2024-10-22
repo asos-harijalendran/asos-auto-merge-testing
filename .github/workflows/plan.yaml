@@ -116,7 +116,7 @@ jobs:
             *Pusher: @${{ github.actor }}, Action: \`${{ github.event_name }}\`, Workflow: \`${{ github.workflow }}\`*`;
 
       - name: Approval Requirement Core Code - PR Comment
-        if: steps.get-changed-files.outputs.runterraformsteps == 'false'
+        if: steps.get-changed-files.outputs.runsteps == 'false'
         uses: mshick/add-pr-comment@v2
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
