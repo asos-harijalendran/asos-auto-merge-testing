@@ -1,0 +1,44 @@
+name: auto-rollback
+
+on:
+  pull_request:
+    types: [review_requested]
+    branches:
+      - 'rollback/**'
+
+jobs:
+  rollback:
+    name: Rollback
+    runs-on: ubuntu-latest
+    env:
+      working-directory: ${{ github.workspace }}/changes
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+
+      - name: test
+        shell: pwsh
+        run : |
+          Write-Host "Rollback PR detected..."
+          Write-Host "PR Number: ${{ github.event.pull_request.number }}"
+          Write-Host "PR Title: ${{ github.event.pull_request.title }}"
+          Write-Host "PR Body: ${{ github.event.pull_request.body }}"
+          Write-Host "PR Author: ${{ github.event.pull_request.user.login }}"
+          Write-Host "PR Requested Reviewers: ${{ github.event.pull_request.requested_reviewers }}"
+          Write-Host "PR State: ${{ github.event.pull_request.state }}"
+
+      # # Approve the rollback PR
+      # - name: approve PR
+      #   run: |
+      #     gh pr review ${{ github.event.pull_request.number }} --approve
+      #   env:
+      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      # # Merge the rollback PR
+      # - name: merge PR
+      #   run: |
+      #     gh pr merge ${{ github.event.pull_request.number }} --squash
+      #   env:
+      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
