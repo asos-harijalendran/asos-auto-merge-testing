@@ -75,7 +75,7 @@ jobs:
           }
           else {
             Write-Host "Changes file does not exist..."
-            exit 1
+            throw "Changes file does not exist..."
           }
 
       - name: Changes Check Success - PR Comment
