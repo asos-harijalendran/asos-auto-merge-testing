@@ -17,7 +17,7 @@ jobs:
     env:
       working-directory: ${{ github.workspace }}/changes
     outputs:
-      applyoutcome: ${{ steps.apply.outcome }}
+      testoutcome: ${{ steps.test.outcome }}
       external_label: ${{ steps.check-label.outputs.has_label }}
       changedfiles: ${{ steps.get-changed-files.outputs.changedFiles }}
     steps:
@@ -90,3 +90,113 @@ jobs:
             --header 'content-type: application/json' | jq -r '.head.ref')
           echo "Branch name is $branch_name"
           echo "::set-output name=branch_name::$branch_name"
+      
+      # Test code
+      - name: Test code
+        id: test
+        shell: pwsh
+        run: |
+          if (Test-Path -Path ${{ github.workspace }}/changes/changes.txt) {
+            Write-Host "Changes file exists"
+          } else {
+            Write-Host "Changes file does not exist"
+            exit 1
+          }
+
+          $fileContents = Get-Content -Path ${{ github.workspace }}/changes/changes.txt
+
+          if ($fileContents -eq "Success") {
+            Write-Host "File contents are correct"
+          } else {
+            Write-Host "File contents are incorrect"
+            exit 1
+          }
+
+
+  # Roll back changes in the apply job if it fails
+  rollback:
+    name: Rollback
+    needs: apply
+    if: always() && needs.apply.result == 'failure'
+    runs-on: ubuntu-latest
+    env:
+      working-directory: ${{ github.workspace }}/changes
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+
+      - name: Rollback
+        id: rollback
+        shell: pwsh
+        run: |
+          # Git setup
+          echo "Rolling back changes..."
+          echo "Current commit: ${{ github.sha }}"
+          echo "Previous commit: ${{ github.event.before }}"
+          echo "Run ID: ${{ github.run_id }}"
+          git config user.email "rollback-changes@thing.com"
+          git config user.name "rollback-changes"
+          git checkout main
+          git pull
+
+          # Get info about the previous commit
+          $previousCommit = git log -1 --pretty=format:"%H%n%an <%ae>%n%ad%n%s"
+          echo "::set-output name=previousCommitAccount::$previousCommit[1]"
+          echo "::set-output name=previousCommitMessage::$previousCommit[3]"
+
+          # Check if the previous commit was a rollback
+          if (($previousCommit[1] -like "github-actions[bot]*") -and ($previousCommit[3] -like "*Rollback changes - Automatic*")) {
+            echo "Previous commit was a Rollback. Creating a Rollback PR for manual review..."
+            echo "::set-output name=automaticRollback::false"
+            git checkout -b manual-rollback/${{ github.run_id }}
+            git revert --no-edit -m 1 HEAD
+            git push origin HEAD
+          } else {
+            echo "Creating automatic rollback PR..."
+            echo "::set-output name=automaticRollback::true"
+            git checkout -b auto-rollback/${{ github.run_id }}
+            git revert --no-edit -m 1 HEAD
+            git push origin HEAD
+          }
+
+      # Create PR with roll back changes. We cannot push directly to main branch because of branch protection rules
+      - name: Create Pull Request for manual review
+        if: steps.rollback.outputs.automaticRollback == 'false'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          response=$(curl \
+          -X POST \
+          -H "Authorization: token $GITHUB_TOKEN" \
+          -H "Accept: application/vnd.github.v3+json" \
+          https://api.github.com/repos/${{ github.repository }}/pulls \
+          -d '{
+            "title": "Rollback changes - Manual Review",
+            "body": "This PR rolls back the changes made in ${{ github.sha }}.",
+            "head": "manual-rollback/${{ github.run_id }}",
+            "base": "main"
+          }')
+          
+          echo "PR_URL=$(echo $response | jq -r '.html_url')" >> $GITHUB_ENV
+      
+      # Create PR with roll back changes. We cannot push directly to main branch because of branch protection rules
+      - name: Create Pull Request for automatic rollback
+        if: steps.rollback.outputs.automaticRollback == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          response=$(curl \
+          -X POST \
+          -H "Authorization: token $GITHUB_TOKEN" \
+          -H "Accept: application/vnd.github.v3+json" \
+          https://api.github.com/repos/${{ github.repository }}/pulls \
+          -d '{
+            "title": "Rollback changes - Automatic",
+            "body": "This PR rolls back the changes made in ${{ github.sha }}.",
+            "head": "auto-rollback/${{ github.run_id }}",
+            "base": "main"
+          }')
+          
+          echo "PR_URL=$(echo $response | jq -r '.html_url')" >> $GITHUB_ENV

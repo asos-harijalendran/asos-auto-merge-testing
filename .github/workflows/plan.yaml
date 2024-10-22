@@ -1,0 +1,129 @@
+name: Plan
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions: write-all
+
+jobs:
+  # If the event is a pull request and the action is synchronize, reopened, or edited, run the cleanup-comments job to remove old Terraform plans
+  cleanup-comments:
+    name: Cleanup comments if re-based
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' && (github.event.action == 'synchronize' || github.event.action == 'reopened' || github.event.action == 'edited')
+    steps: 
+      - name: Cleanup Comments
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          comments=$(curl -s -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments)
+          # Loop through the comments
+          for comment in $(echo "${comments}" | jq -r '.[] | @base64'); do
+              comment_decoded=$(echo "${comment}" | base64 --decode)
+              comment_id=$(echo "${comment_decoded}" | jq -r '.id')
+              comment_author=$(echo "${comment_decoded}" | jq -r '.user.login')
+
+              # Check if the comment is posted by github-actions[bot]
+              if [[ "${comment_author}" == "github-actions[bot]" ]]; then
+                  # Delete the comment
+                  curl -X DELETE -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/repos/${{ github.repository }}/issues/comments/${comment_id}
+              fi
+          done
+
+  # test the changes directory
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    env:
+      working-directory: ${{ github.workspace }}/changes
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+
+      - name: Get changed files
+        id: get-changed-files
+        shell: pwsh
+        run: |
+          $changedFiles = (git diff --name-only ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }}).Split(' ')
+          Write-Host "Changed files..."
+          $changedFiles
+          $runsteps = $false
+          $changedFiles | ForEach-Object {
+            if ($_ -match 'changes/') {
+              $runsteps = $true
+            }
+          }
+          if ($runsteps -eq $true) {
+            echo "::set-output name=runsteps::true"
+          }
+          else {
+            echo "::set-output name=runsteps::false"
+          }
+      
+      - name: Changes Check
+        id: changescheck
+        if: steps.get-changed-files.outputs.runsteps == 'true'
+        shell: pwsh
+        run: |
+          Write-Host "Checking existance of changes file..."
+          if (Test-Path -Path $env:working-directory\changes.txt) {
+            Write-Host "Changes file exists..."
+          }
+          else {
+            Write-Host "Changes file does not exist..."
+            exit 1
+          }
+
+      - name: Changes Check Success - PR Comment
+        if: steps.changescheck.outcome == 'success' && steps.get-changed-files.outputs.runsteps == 'true'
+        uses: mshick/add-pr-comment@v2
+        with:
+          allow-repeats: true
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          message: |
+            ## Planned Changes 📖
+            Changes to the changes directory have been detected
+
+            *Pusher: @${{ github.actor }}, Action: \`${{ github.event_name }}\`, Workflow: \`${{ github.workflow }}\`*`;
+
+      - name: Changes Check Failure - PR Comment
+        if: steps.changescheck.outcome == 'failure' && steps.get-changed-files.outputs.runsteps == 'true'
+        uses: mshick/add-pr-comment@v2
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          allow-repeats: true
+          message: |
+            ## Planning Changes Failed 👎
+            The changes in the changes directory have failed
+            
+            *Pusher: @${{ github.actor }}, Action: \`${{ github.event_name }}\`, Workflow: \`${{ github.workflow }}\`*`;
+
+      - name: Approval Requirement - PR Comment
+        if: steps.changescheck.outcome == 'success' && steps.get-changed-files.outputs.runsteps == 'true'
+        uses: mshick/add-pr-comment@v2
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          allow-repeats: true
+          message: |
+            ***Awaiting two approvers***
+                
+            The changes in this Pull Request will be applied once two approvals are received.
+            
+            *Pusher: @${{ github.actor }}, Action: \`${{ github.event_name }}\`, Workflow: \`${{ github.workflow }}\`*`;
+
+      - name: Approval Requirement Core Code - PR Comment
+        if: steps.get-changed-files.outputs.runterraformsteps == 'false'
+        uses: mshick/add-pr-comment@v2
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          allow-repeats: true
+          message: |
+            ***Awaiting two approvers***
+                
+            No changes in 'changes/' directory, so checks have been skipped. This is most likely a core code change and will require two approvals before merging.
+          
+            
+            *Pusher: @${{ github.actor }}, Action: \`${{ github.event_name }}\`, Workflow: \`${{ github.workflow }}\`*`;
