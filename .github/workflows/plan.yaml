@@ -75,7 +75,7 @@ jobs:
           }
           else {
             Write-Host "Changes file does not exist..."
-            throw "Changes file does not exist..."
+            exit 1
           }
 
       - name: Changes Check Success - PR Comment
@@ -128,3 +128,12 @@ jobs:
           
             
             *Pusher: @${{ github.actor }}, Action: \`${{ github.event_name }}\`, Workflow: \`${{ github.workflow }}\`*`;
+
+      # Fail workflow if any of the terraform steps failed
+      - name: Check for failure
+        if: ${{ always() }}
+        run: |
+          if [ "${{ steps.changescheck.outcome }}" == "failure" ]; then
+            echo "Terraform Init failed. Check the logs for more information."
+            exit 1
+          fi
