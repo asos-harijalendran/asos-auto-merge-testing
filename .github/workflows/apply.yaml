@@ -1,0 +1,92 @@
+name: Apply
+
+on:
+  push:
+      branches:
+          - main
+      paths:
+          - 'changes/**'
+
+permissions: write-all
+
+
+jobs:
+  apply:
+    name: Apply
+    runs-on: ubuntu-latest
+    env:
+      working-directory: ${{ github.workspace }}/changes
+    outputs:
+      applyoutcome: ${{ steps.apply.outcome }}
+      external_label: ${{ steps.check-label.outputs.has_label }}
+      changedfiles: ${{ steps.get-changed-files.outputs.changedFiles }}
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+
+      # Get changed files that were merged
+      - name: Get changed files
+        id: get-changed-files
+        shell: pwsh
+        run: |
+          $changedFiles = (git diff --name-only ${{ github.event.before }} ${{ github.event.after }}).Split(' ')
+          Write-Host "Changed files..."
+          $changedFiles
+          echo "::set-output name=changedFiles::$changedFiles"
+
+      # Get the PR details from the merge
+      - name: Get PR Details
+        id: get-pr-details
+        shell: bash
+        run: |
+          commit_sha="${{ github.sha }}"
+          repo="${{ github.repository }}"
+          token="${{ secrets.GITHUB_TOKEN }}"
+          
+          response=$(curl --request GET \
+            --url https://api.github.com/repos/$repo/commits/$commit_sha/pulls \
+            --header "Authorization: Bearer $token" \
+            --header "Accept: application/vnd.github.groot-preview+json")
+          
+          if [ $(echo "$response" | jq 'length') -gt 0 ]; then
+            pr_number=$(echo "$response" | jq '.[0].number')
+            pr_labels=$(echo "$response" | jq -r '.[0].labels[].name' | tr '\n' ',')
+          else
+            pr_number=""
+            pr_labels=""
+          fi
+
+          if [ -z "$pr_number" ]; then
+            echo "Error: No pull request number found"
+            exit 1
+          fi
+          
+          echo "::set-output name=pr_number::$pr_number"
+          echo "::set-output name=pr_labels::$pr_labels"
+
+      # Check for the label "external" and output
+      - name: Check for specific label
+        id: check-label
+        shell: bash
+        run: |
+          if echo "${{ steps.get-pr-details.outputs.pr_labels }}" | grep -q "Created by external"; then
+            echo "PR has label 'Created by external'"
+            echo "::set-output name=has_label::true"
+          else
+            echo "::set-output name=has_label::false"
+          fi
+
+      # Get the branch name from the merge and output
+      - name: Get branch name
+        id: get-branch-name
+        shell: bash
+        run: |
+          pr_number=${{ steps.get-pr-details.outputs.pr_number }}
+          branch_name=$(curl --request GET \
+            --url https://api.github.com/repos/${{ github.repository }}/pulls/$pr_number \
+            --header 'authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' \
+            --header 'content-type: application/json' | jq -r '.head.ref')
+          echo "Branch name is $branch_name"
+          echo "::set-output name=branch_name::$branch_name"
