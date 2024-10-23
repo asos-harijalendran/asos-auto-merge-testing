@@ -56,3 +56,18 @@ jobs:
           }')
           
           echo "PR_URL=$(echo $response | jq -r '.html_url')" >> $GITHUB_ENV
+
+      - name: addprcomment
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "PR URL: ${{ env.PR_URL }}"
+          echo $PR_URL
+          curl \
+          -X POST \
+          -H "Authorization: token $GITHUB_TOKEN" \
+          -H "Accept: application/vnd.github.v3+json" \
+          ${{ env.PR_URL }}/comments \
+          -d '{
+            "body": "Test PR"
+          }'
