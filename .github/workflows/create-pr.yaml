@@ -35,6 +35,8 @@ jobs:
           else {
             echo " " > testing.txt
           }
+          git add testing.txt
+          git commit -m "Test PR"
           git push origin HEAD
 
       - name: raisepr
